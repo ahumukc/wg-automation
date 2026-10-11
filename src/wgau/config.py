@@ -63,6 +63,11 @@ def load_config(path: Path) -> AppConfig:
     except KeyError as e:
         raise ConfigError(f"Missing option {e} in {path}") from e
 
+    if not clients_dir.is_absolute():
+        raise ConfigError(f"CLIENTS_FOLDER_PATH must be absolute, got: {clients_dir}")
+    if not wg_conf.is_absolute():
+        raise ConfigError(f"WIREGUARD_CONFIG_FILE must be absolute, got: {wg_conf}")
+
     clients_dir = clients_dir.resolve()
     wg_conf = wg_conf.resolve()
 

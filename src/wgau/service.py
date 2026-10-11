@@ -34,6 +34,7 @@ def add_client(app: AppConfig) -> None:
     app.clients_dir.mkdir(parents=True, exist_ok=True)
     interface, peers = wgconf.parse_wg0(app.wg_conf)
 
+    server_public_key = _server_public_key(interface)
     name = alloc.next_name(app.client_prefix, _taken_names(app, peers))
     client_ip = alloc.next_free_ip(app.address_base, _used_suffixes(app, peers))
     keys = wg.generate_keys()
@@ -43,7 +44,7 @@ def add_client(app: AppConfig) -> None:
     client_dir = files.create_client_dir(app.clients_dir, name)
     files.write_keys(client_dir, keys)
     conf_text = files.render_client_conf(
-        keys, client_ip, _server_public_key(interface), app
+        keys, client_ip, server_public_key, app
     )
     files.write_client_conf(client_dir, conf_text)
     files.generate_qr_png(client_dir, name, conf_text)
