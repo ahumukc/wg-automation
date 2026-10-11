@@ -1,0 +1,83 @@
+from __future__ import annotations
+
+import configparser
+import os
+import re
+from dataclasses import dataclass
+from pathlib import Path
+
+from wgau.errors import ConfigError, Wg0Error
+from wgau.utils import atomic_write
+
+CONFIG_NAME = "wgau.conf"
+
+
+@dataclass(frozen=True)
+class AppConfig:
+    clients_dir: Path
+    wg_conf: Path
+    endpoint: str
+    dns: str
+    address_base: str
+    client_prefix: str
+
+
+def default_config_path() -> Path:
+    return Path("/etc/wgau/wgau.conf")
+
+
+TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+
+
+def template_text(name: str) -> str:
+    path = TEMPLATES_DIR / name
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError as e:
+        raise ConfigError(f"Template '{name}' not found in {TEMPLATES_DIR}") from e
+
+
+def ensure_config(path: Path) -> bool:
+    if path.exists():
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(path, template_text(CONFIG_NAME), mode=0o644)
+    return True
+
+
+def load_config(path: Path) -> AppConfig:
+    parser = configparser.ConfigParser()
+    try:
+        with path.open(encoding="utf-8") as f:
+            parser.read_file(f)
+    except OSError as e:
+        raise ConfigError(f"Cannot read {path}: {e}") from e
+
+    try:
+        clients_dir = Path(parser["General"]["CLIENTS_FOLDER_PATH"]).expanduser()
+        wg_conf = Path(parser["General"]["WIREGUARD_CONFIG_FILE"]).expanduser()
+        endpoint = parser["Wireguard"]["ENDPOINT"].strip()
+        address_base = parser["Wireguard"]["ADDRESS_BASE"].strip()
+        dns = parser["Wireguard"]["DNS_SERVER"].strip()
+        client_prefix = parser["Naming"]["CLIENT_PREFIX"].strip()
+    except KeyError as e:
+        raise ConfigError(f"Missing option {e} in {path}") from e
+
+    clients_dir = clients_dir.resolve()
+    wg_conf = wg_conf.resolve()
+
+    if not clients_dir.is_absolute():
+        raise ConfigError(f"CLIENTS_FOLDER_PATH must be absolute, got: {clients_dir}")
+    if not re.fullmatch(r"\d+\.\d+\.\d+", address_base):
+        raise ConfigError(f"ADDRESS_BASE must look like '10.7.0', got: {address_base}")
+    if not wg_conf.exists():
+        raise Wg0Error(f"WireGuard config not found: {wg_conf}")
+
+    return AppConfig(
+        clients_dir=clients_dir,
+        wg_conf=wg_conf,
+        endpoint=endpoint,
+        dns=dns,
+        address_base=address_base,
+        client_prefix=client_prefix,
+    )

@@ -1,3 +1,7 @@
 .kilo
 temp
 wgau.conf
+dump.txt
+__pycache__/
+*.py[cod]
+*.egg-info/
