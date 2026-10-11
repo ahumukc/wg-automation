@@ -33,9 +33,7 @@ def main(argv: list[str] | None = None) -> int:
         config_path = config.default_config_path()
 
         if config.ensure_config(config_path):
-            print(f"Config was created: {config_path}")
-            print("Edit it for your server (ENDPOINT, ADDRESS_BASE, DNS_SERVER, ...)")
-            print("and run the command again.")
+            
             return 0
 
         app = config.load_config(config_path)

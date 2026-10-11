@@ -56,13 +56,25 @@ def add_client(app: AppConfig) -> None:
 def sync_folders(app: AppConfig) -> int:
     app.clients_dir.mkdir(parents=True, exist_ok=True)
     _, peers = wgconf.parse_wg0(app.wg_conf)
-    created = 0
 
+    taken = _taken_names(app, peers)
+
+    def new_name() -> str:
+        name = alloc.next_name(app.client_prefix, taken)
+        taken.add(name)
+        return name
+
+    renamed = wgconf.name_unnamed_peers(app.wg_conf, new_name)
+    if renamed:
+        print(f"Added BEGIN_PEER/END_PEER markers for {renamed} peer(s) in {app.wg_conf}")
+        _, peers = wgconf.parse_wg0(app.wg_conf)  # перечитываем: пиры теперь с именами
+
+    created = 0
     for peer in peers:
         name = peer.name
         if name is None:
             ip = peer.first_ip or "?"
-            name = f"{app.client_prefix}{ip.rsplit('.', 1)[-1]}"
+            name = f"{app.client_prefix}_{ip.rsplit('.', 1)[-1]}"
             print(f"Warning: peer {ip} has no BEGIN_PEER marker, "
                   f"using folder name '{name}'")
 
@@ -123,4 +135,6 @@ def make_conf_from_sec_key(app: AppConfig, client_name: str) -> Path:
     conf_text = files.render_client_conf(
         keys, client_ip, _server_public_key(interface), app
     )
-    return files.write_client_conf(client_dir, conf_text)
+    conf_path = files.write_client_conf(client_dir, conf_text)
+    files.generate_qr_png(client_dir, client_name, conf_text)
+    return conf_path

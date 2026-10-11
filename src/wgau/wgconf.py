@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Callable
 
 from wgau.errors import PeerExistsError, Wg0Error
 from wgau.models import Peer, WgInterface
@@ -72,3 +73,62 @@ def add_peer(path: Path, name: str, public_key: str,
     block = build_peer_block(name, public_key, psk, client_ip)
     mode = path.stat().st_mode & 0o777
     atomic_write(path, content.rstrip("\n") + "\n\n" + block, mode=mode)
+
+def name_unnamed_peers(path: Path, new_name: Callable[[], str]) -> int:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as e:
+        raise Wg0Error(f"Cannot read {path}: {e}") from e
+
+    out: list[str] = []
+    renamed = 0
+    in_named_block = False
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        if BEGIN_PEER_RE.fullmatch(stripped):
+            in_named_block = True
+            out.append(line)
+            i += 1
+            continue
+
+        if END_PEER_RE.fullmatch(stripped):
+            in_named_block = False
+            out.append(line)
+            i += 1
+            continue
+
+        if stripped == "[Peer]" and not in_named_block:
+            j = i + 1
+            while j < len(lines):
+                s = lines[j].strip()
+                if (
+                    (s.startswith("[") and s.endswith("]"))
+                    or BEGIN_PEER_RE.fullmatch(s)
+                    or END_PEER_RE.fullmatch(s)
+                ):
+                    break
+                j += 1
+
+            end = j - 1
+            while end > i and not lines[end].strip():
+                end -= 1
+
+            name = new_name()
+            out.append(f"# BEGIN_PEER {name}")
+            out.extend(lines[i:end + 1])
+            out.append(f"# END_PEER {name}")
+            renamed += 1
+            i = end + 1
+            continue
+
+        out.append(line)
+        i += 1
+
+    if renamed:
+        mode = path.stat().st_mode & 0o777
+        atomic_write(path, "\n".join(out) + "\n", mode=mode)
+    return renamed
