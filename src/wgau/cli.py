@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
 
 from wgau import config, service
 from wgau.errors import WgauError
@@ -33,7 +32,9 @@ def main(argv: list[str] | None = None) -> int:
         config_path = config.default_config_path()
 
         if config.ensure_config(config_path):
-            
+            print(f"Config was created: {config_path}")
+            print("Edit it for your server (ENDPOINT, ADDRESS_BASE, DNS_SERVER, ...)")
+            print("and run the command again.")
             return 0
 
         app = config.load_config(config_path)
@@ -48,6 +49,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "conf":
             conf_path = service.make_conf_from_sec_key(app, args.client_name)
             print(f"Config generated: {conf_path}")
+            print(f"QR code:     {conf_path.parent / (args.client_name + '.png')}")
     except WgauError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 from string import Template
 
 from wgau.config import AppConfig, template_text
 from wgau.errors import ClientNotFoundError
 from wgau.models import KeyPair, Peer
-from wgau.utils import atomic_write
+from wgau.utils import atomic_write, atomic_write_bytes
 
 try:
     import qrcode
@@ -67,7 +68,10 @@ def read_client_conf(client_dir: Path) -> str:
 
 def generate_qr_png(client_dir: Path, client_name: str, conf_text: str) -> Path:
     qr_path = client_dir / f"{client_name}.png"
-    qrcode.make(conf_text).save(qr_path)
+    img = qrcode.make(conf_text)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    atomic_write_bytes(qr_path, buf.getvalue(), mode=0o600)
     return qr_path
 
 
