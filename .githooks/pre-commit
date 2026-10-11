@@ -1,0 +1,13 @@
+#!/bin/sh
+# pre-commit: коммит отменяется, если тесты падают
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+python -m pytest -q
+if [ $? -ne 0 ]; then
+    echo ""
+    echo "✖ Тесты упали — коммит отменён."
+    echo "  Починить: pytest"
+    echo "  Обойти:   git commit --no-verify   (не рекомендуется)"
+    exit 1
+fi
