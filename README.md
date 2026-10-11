@@ -8,7 +8,8 @@
 
 - `add` — полный цикл создания клиента: ключи (`wg genkey`/`genpsk`),
   свободный IP, помеченный пир в `wg0.conf`, папка с `client.conf` и QR-кодом
-- `sync` — создать папки для существующих пиров и дописать безымяннымпирам маркеры # BEGIN_PEER и # END_PEER в `wg0.conf`
+- `sync` — пометить безымянных пиров маркерами `# BEGIN_PEER`/`# END_PEER`
+  и создать папки для существующих пиров
 - `show` — QR-код клиентского конфига прямо в терминале (ASCII)
 - `conf` — пересборка `client.conf` из сохранённого `sec.key`
 - атомарная запись всех файлов (tmp + rename), ключи и конфиги — `0600`
@@ -35,12 +36,12 @@ wgau --help
 
 Установятся зависимости (`qrcode[pil]`) и консольная команда `wgau`.
 
-Без установки можно запускать из корня проекта: `python -m wgau ...`.
+Без установки — из корня проекта: `PYTHONPATH=src python -m wgau ...`.
 
 ## Быстрый старт
 
 ```bash
-# 1. Первый запуск создаст /etc/wgau/wgau.conf из шаблона
+# 1. Первый запуск только создаст /etc/wgau/wgau.conf из шаблона и выйдет
 sudo wgau add
 
 # 2. Поправьте конфиг под свой сервер
@@ -61,13 +62,11 @@ sudo wgau show client1
 
 ## Конфигурация
 
-Путь к конфигу ищется в порядке приоритета:
+Путь к конфигу фиксирован: `/etc/wgau/wgau.conf`.
 
-1. флаг `--config` / `-c`
-2. переменная окружения `WGAU_CONFIG`
-3. `/etc/wgau/wgau.conf` (по умолчанию)
-
-Если файла нет — при первом запуске он создаётся из шаблона.
+Если файла нет — при первом запуске любой команды он создаётся из шаблона
+(`src/wgau/templates/wgau.conf`), после чего команда сразу завершается,
+ничего не меняя. Поправьте конфиг под свой сервер и запустите команду снова.
 
 ```ini
 [General]
@@ -77,7 +76,7 @@ WIREGUARD_CONFIG_FILE = /etc/wireguard/wg0.conf
 [Wireguard]
 ENDPOINT = vpn.example.com:51820
 ADDRESS_BASE = 10.7.0
-DNS_SERVER = 1.1.1.1
+DNS_SERVER = 1.1.1.1, 1.0.0.1
 
 [Naming]
 CLIENT_PREFIX = client
@@ -89,12 +88,13 @@ CLIENT_PREFIX = client
 | `WIREGUARD_CONFIG_FILE` | путь к конфигу сервера                                        | `/etc/wireguard/wg0.conf` |
 | `ENDPOINT`           | адрес:порт сервера, попадает в клиентские конфиги               | `vpn.example.com:51820` |
 | `ADDRESS_BASE`       | первые три октета клиентской подсети (из `Address` интерфейса)  | `10.7.0`             |
-| `DNS_SERVER`         | DNS для клиентов                                                | `1.1.1.1`            |
+| `DNS_SERVER`         | DNS для клиентов (список через запятую)                        | `1.1.1.1, 1.0.0.1`   |
 | `CLIENT_PREFIX`      | префикс имён клиентов (`client1`, `client2`, ...)               | `client`             |
 
-> **Миграция со старой версии (одна脚本-файл):** ключ `ABSALUTE_CLIENTS_FOLDER_PATH`
-> переименован в `CLIENTS_FOLDER_PATH` и теперь указывает **сразу** на папку
-> клиентов (суффикс `/clients` больше не дописывается):
+> **Миграция со старой версии (один Python-скрипт):** ключ
+> `ABSALUTE_CLIENTS_FOLDER_PATH` переименован в `CLIENTS_FOLDER_PATH`
+> и теперь указывает **сразу** на папку клиентов (суффикс `/clients`
+> больше не дописывается):
 > было `/etc/wgau/` → стало `/etc/wgau/clients`.
 
 ## Команды
@@ -112,11 +112,18 @@ CLIENT_PREFIX = client
 
 ### `wgau sync`
 
-Пробегает по всем пирам в `wg0.conf` и создаёт папку тем, у кого её нет.
-Пиры с маркером `# BEGIN_PEER` получают папку с своим именем; без маркера —
-`<префикс>_<последний октет IP>` (с предупреждением). В папку пишутся
-`pub.key` и `psk.key` из `wg0.conf`; приватного ключа в `wg0.conf` нет, поэтому
-`client.conf` не создаётся — положите `sec.key` и выполните `wgau conf <имя>`.
+Два прохода по `wg0.conf`:
+
+1. Безымянным пирам (секции `[Peer]` без маркеров) дописываются маркеры
+   `# BEGIN_PEER <name>` / `# END_PEER <name>` с ближайшим свободным именем
+   `clientN`; выводится `Added BEGIN_PEER/END_PEER markers for N peer(s) in ...`.
+2. Для каждого пира создаётся папка, если её ещё нет. Имя папки — имя пира
+   из маркера (если пир всё же остался безымянным — `<префикс>_<последний
+   октет IP>` с предупреждением). В папку пишутся `pub.key` и `psk.key`
+   из `wg0.conf`; приватного ключа в `wg0.conf` нет, поэтому `client.conf`
+   не создаётся — положите `sec.key` в папку и выполните `wgau conf <имя>`.
+
+Итог: `Created N folder(s)`.
 
 ### `wgau show <name>`
 
@@ -125,8 +132,9 @@ CLIENT_PREFIX = client
 
 ### `wgau conf <name>`
 
-Пересобирает `client.conf` из сохранённого `sec.key`:
-выводит публичный ключ, сверяет с `pub.key`, берёт IP и PSK пира из `wg0.conf`.
+Пересобирает `client.conf` из сохранённого `sec.key`: вычисляет публичный
+ключ, сверяет с `pub.key` (если тот лежит в папке), берёт IP и PSK пира
+из `wg0.conf`. Заодно перезаписывает `client.conf` и QR-код `<name>.png`.
 
 ```bash
 wgau conf client3        # → Config generated: /etc/wgau/clients/client3/client.conf
@@ -197,6 +205,7 @@ wgau/
 ├── wgconf.py    # парсинг/дописывание wg0.conf
 ├── alloc.py     # выделение IP и имён (чистые функции)
 ├── files.py     # файлы клиента, QR
+├── utils.py     # атомарная запись (tmp + fsync + rename)
 ├── service.py   # сценарии (add/sync/show/conf)
 └── templates/   # wgau.conf, client.conf
 ```
@@ -233,6 +242,9 @@ pytest
 | `No free IP in 10.7.0.2–10.7.0.254` | подсеть заполнена |
 | `sec.key ... does not match pub.key` | в папке лежит чужой приватный ключ |
 | `Missing option '...' in ...` | в wgau.conf нет обязательного ключа |
+| `Client 'x' not found in ...` | нет папки клиента — проверьте имя |
+| `client.conf not found — run 'wgau add' or 'wgau conf'` | для `show` нужен готовый конфиг |
+| `.../sec.key not found` | для `conf` нужен сохранённый приватный ключ |
 
 ## Лицензия
 
