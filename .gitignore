@@ -1,6 +1,6 @@
 .kilo
 temp
-wgau.conf
+temo/wgau.conf
 dump.txt
 __pycache__/
 *.py[cod]

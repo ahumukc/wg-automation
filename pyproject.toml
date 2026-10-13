@@ -18,7 +18,7 @@ wgau = "wgau.cli:main"
 [tool.setuptools.packages.find]
 
 [tool.setuptools.package-data]
-wgau = ["templates/*"]
+"wgau" = ["templates/*.conf", "templates/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
