@@ -74,6 +74,59 @@ def add_peer(path: Path, name: str, public_key: str,
     mode = path.stat().st_mode & 0o777
     atomic_write(path, content.rstrip("\n") + "\n\n" + block, mode=mode)
 
+
+def remove_peer(path: Path, name: str) -> bool:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as e:
+        raise Wg0Error(f"Cannot read {path}: {e}") from e
+
+    out: list[str] = []
+    removing = False
+    removed = False
+    skip_blank = False
+
+    for line in lines:
+        stripped = line.strip()
+
+        if removing:
+            m = END_PEER_RE.fullmatch(stripped)
+            if m and m.group(1) == name:
+                removing = False
+                skip_blank = True
+                continue
+            if m or BEGIN_PEER_RE.fullmatch(stripped):
+                raise Wg0Error(
+                    f"Malformed {path}: unexpected marker {stripped!r} "
+                    f"inside '# BEGIN_PEER {name}' block"
+                )
+            continue
+
+        m = BEGIN_PEER_RE.fullmatch(stripped)
+        if m and m.group(1) == name:
+            removing = True
+            removed = True
+            continue
+
+        if skip_blank:
+            skip_blank = False
+            if not stripped:
+                continue
+
+        out.append(line)
+
+    if removing:
+        raise Wg0Error(
+            f"Malformed {path}: '# BEGIN_PEER {name}' without matching END_PEER"
+        )
+
+    if removed:
+        mode = path.stat().st_mode & 0o777
+        atomic_write(path, "\n".join(out).rstrip("\n") + "\n", mode=mode)
+
+    return removed
+
+
 def name_unnamed_peers(path: Path, new_name: Callable[[], str]) -> int:
     try:
         lines = path.read_text(encoding="utf-8").splitlines()

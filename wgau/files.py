@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import shutil
 from pathlib import Path
 from string import Template
 
@@ -35,6 +36,10 @@ def create_client_dir(clients_dir: Path, name: str) -> Path:
     client_dir = clients_dir / name
     client_dir.mkdir(parents=True, exist_ok=True)
     return client_dir
+
+
+def delete_client_dir(client_dir: Path) -> None:
+    shutil.rmtree(client_dir)
 
 
 def write_keys(client_dir: Path, keys: KeyPair) -> None:

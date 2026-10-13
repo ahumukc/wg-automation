@@ -22,6 +22,11 @@ def build_parser() -> argparse.ArgumentParser:
     conf = sub.add_parser("conf", help="Generate client.conf from existing sec.key")
     conf.add_argument("client_name", help="Client name, e.g. client1")
 
+    delete = sub.add_parser("delete", help="Delete client (peer in wg0.conf + client folder)")
+    delete.add_argument("client_name", help="Client name, e.g. client1")
+    delete.add_argument("-y", "--yes", action="store_true",
+                        help="Skip confirmation prompt")
+
     return parser
 
 
@@ -50,6 +55,8 @@ def main(argv: list[str] | None = None) -> int:
             conf_path = service.make_conf_from_sec_key(app, args.client_name)
             print(f"Config generated: {conf_path}")
             print(f"QR code:     {conf_path.parent / (args.client_name + '.png')}")
+        elif args.command == "delete":
+            service.delete_client(app, args.client_name, assume_yes=args.yes)
     except WgauError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

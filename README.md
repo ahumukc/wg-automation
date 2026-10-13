@@ -12,6 +12,7 @@
   и создать папки для существующих пиров
 - `show` — QR-код клиентского конфига прямо в терминале (ASCII)
 - `conf` — пересборка `client.conf` из сохранённого `sec.key`
+- `delete` — удаление клиента: блок пира из `wg0.conf` + папка с ключами и конфигом
 - атомарная запись всех файлов (tmp + rename), ключи и конфиги — `0600`
 - пиры в `wg0.conf` помечаются маркерами `# BEGIN_PEER/<name>` — ничего не теряется
   при ручном редактировании файла
@@ -139,6 +140,30 @@ CLIENT_PREFIX = client
 ```bash
 wgau conf client3        # → Config generated: /etc/wgau/clients/client3/client.conf
 ```
+
+### `wgau delete <name>`
+
+Удаляет клиента полностью и безвозвратно:
+
+1. вырезает блок `# BEGIN_PEER <name>` … `# END_PEER <name>` из `wg0.conf`
+   (атомарно, права файла сохраняются);
+2. удаляет папку `clients/<name>/` (`sec.key`, `pub.key`, `psk.key`,
+   `client.conf`, QR-код).
+
+Спрашивает подтверждение; `-y` / `--yes` — без вопроса. Если пира нет в
+`wg0.conf`, но папка есть (или наоборот) — удаляется то, что найдено.
+
+```bash
+wgau delete client2
+# Delete client 'client2' (peer, keys, client.conf, QR)? [y/N] y
+# Peer removed: /etc/wireguard/wg0.conf
+# Folder removed: /etc/wgau/clients/client2
+```
+
+> Безымянный пир (без маркеров) по имени не найти — сначала прогоните `wgau sync`.
+
+После удаления примените изменения, иначе пир продолжит работать до
+перезапуска туннеля: `sudo wg syncconf wg0 <(wg-quick strip wg0)`.
 
 ### Папка клиента
 

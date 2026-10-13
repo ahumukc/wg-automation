@@ -139,3 +139,42 @@ def make_conf_from_sec_key(app: AppConfig, client_name: str) -> Path:
     conf_path = files.write_client_conf(client_dir, conf_text)
     files.generate_qr_png(client_dir, client_name, conf_text)
     return conf_path
+
+
+def delete_client(app: AppConfig, client_name: str, assume_yes: bool = False) -> None:
+    if not client_name or Path(client_name).name != client_name:
+        raise ClientNotFoundError(f"Invalid client name: '{client_name}'")
+
+    client_dir = app.clients_dir / client_name
+
+    _, peers = wgconf.parse_wg0(app.wg_conf)
+    peer_exists = any(p.name == client_name for p in peers)
+    folder_exists = client_dir.is_dir()
+
+    if not peer_exists and not folder_exists:
+        raise ClientNotFoundError(
+            f"Client '{client_name}' not found in {app.wg_conf} "
+            f"nor in {app.clients_dir}"
+        )
+
+    if not assume_yes:
+        try:
+            answer = input(
+                f"Delete client '{client_name}' (peer, keys, client.conf, QR)? [y/N] "
+            )
+        except (EOFError, KeyboardInterrupt):
+            answer = ""
+        if answer.strip().lower() not in ("y", "yes"):
+            print("Cancelled")
+            return
+
+    if wgconf.remove_peer(app.wg_conf, client_name):
+        print(f"Peer removed from {app.wg_conf}")
+
+    if folder_exists:
+        files.delete_client_dir(client_dir)
+        print(f"Folder removed: {client_dir}")
+
+    iface = app.wg_conf.stem
+    print("Apply changes to the running tunnel:")
+    print(f"  sudo wg syncconf {iface} <(wg-quick strip {iface})")
