@@ -33,6 +33,7 @@ def wg0(tmp_path: Path) -> Path:
 def app(clients_dir: Path, wg0: Path) -> AppConfig:
     return AppConfig(
         clients_dir=clients_dir,
+        trash_dir=clients_dir.parent / "trash",
         wg_conf=wg0,
         endpoint="vpn.example.com:51820",
         dns="1.1.1.1",

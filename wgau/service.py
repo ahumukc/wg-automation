@@ -1,11 +1,54 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from wgau import alloc, files, wg, wgconf
 from wgau.config import AppConfig
-from wgau.errors import ClientNotFoundError, KeyMismatchError, Wg0Error
+from wgau.errors import (
+    ClientNotFoundError,
+    KeyMismatchError,
+    PermissionDeniedError,
+    Wg0Error,
+)
 from wgau.models import KeyPair, Peer, WgInterface
+
+
+def _writable_dir(path: Path) -> bool:
+    probe = path
+    while not probe.exists():
+        parent = probe.parent
+        if parent == probe:
+            break
+        probe = parent
+    return os.access(probe, os.W_OK | os.X_OK)
+
+
+def _ensure_can_delete(app: AppConfig, client_dir: Path, *,
+                       peer_exists: bool, folder_exists: bool,
+                       permanently: bool, client_name: str) -> None:
+    problems: list[str] = []
+
+    if peer_exists:
+        if not os.access(app.wg_conf, os.W_OK):
+            problems.append(f"no write access to {app.wg_conf}")
+        if not _writable_dir(app.wg_conf.parent):
+            problems.append(f"no write access to {app.wg_conf.parent}")
+
+    if folder_exists:
+        if not _writable_dir(app.clients_dir):
+            problems.append(f"no write access to {app.clients_dir}")
+        if not os.access(client_dir, os.W_OK | os.X_OK):
+            problems.append(f"no write access to {client_dir}")
+        if not permanently and not _writable_dir(app.trash_dir):
+            problems.append(f"no write access to {app.trash_dir}")
+
+    if problems:
+        raise PermissionDeniedError(
+            "Insufficient permissions to delete this client:\n  "
+            + "\n  ".join(problems)
+            + f"\nRun the command as root, e.g.: sudo wgau delete {client_name}"
+        )
 
 
 def _server_public_key(interface: WgInterface) -> str:
@@ -141,7 +184,8 @@ def make_conf_from_sec_key(app: AppConfig, client_name: str) -> Path:
     return conf_path
 
 
-def delete_client(app: AppConfig, client_name: str, assume_yes: bool = False) -> None:
+def delete_client(app: AppConfig, client_name: str, assume_yes: bool = False,
+                  permanently: bool = False) -> None:
     if not client_name or Path(client_name).name != client_name:
         raise ClientNotFoundError(f"Invalid client name: '{client_name}'")
 
@@ -157,10 +201,20 @@ def delete_client(app: AppConfig, client_name: str, assume_yes: bool = False) ->
             f"nor in {app.clients_dir}"
         )
 
+    if client_dir.is_symlink():
+        raise ClientNotFoundError(f"{client_dir} is a symlink, remove it manually")
+
+    _ensure_can_delete(
+        app, client_dir,
+        peer_exists=peer_exists, folder_exists=folder_exists,
+        permanently=permanently, client_name=client_name,
+    )
+
     if not assume_yes:
         try:
             answer = input(
-                f"Delete client '{client_name}' (peer, keys, client.conf, QR)? [y/N] "
+                f"Delete client '{client_name}' "
+                f"{'permanently' if permanently else '(move to trash)'}? [y/N] "
             )
         except (EOFError, KeyboardInterrupt):
             answer = ""
@@ -168,13 +222,19 @@ def delete_client(app: AppConfig, client_name: str, assume_yes: bool = False) ->
             print("Cancelled")
             return
 
-    if wgconf.remove_peer(app.wg_conf, client_name):
+    peer_block: str | None = None
+    if peer_exists:
+        peer_block = wgconf.remove_peer(app.wg_conf, client_name)
         print(f"Peer removed from {app.wg_conf}")
 
-    if folder_exists:
-        files.delete_client_dir(client_dir)
-        print(f"Folder removed: {client_dir}")
+    if permanently:
+        if folder_exists:
+            files.delete_client_permanently(client_dir)
+            print(f"Folder deleted: {client_dir}")
+    else:
+        dest = files.move_client_to_trash(client_dir, app.trash_dir, peer_block)
+        print(f"Moved to trash: {dest}")
 
-    iface = app.wg_conf.stem
-    print("Apply changes to the running tunnel:")
-    print(f"  sudo wg syncconf {iface} <(wg-quick strip {iface})")
+    if peer_block is not None:
+        wg.syncconf(app.wg_conf.stem, app.wg_conf)
+        print(f"Changes applied to running interface {app.wg_conf.stem}")

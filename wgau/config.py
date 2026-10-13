@@ -15,6 +15,7 @@ CONFIG_NAME = "wgau.conf"
 @dataclass(frozen=True)
 class AppConfig:
     clients_dir: Path
+    trash_dir: Path
     wg_conf: Path
     endpoint: str
     dns: str
@@ -63,16 +64,24 @@ def load_config(path: Path) -> AppConfig:
     except KeyError as e:
         raise ConfigError(f"Missing option {e} in {path}") from e
 
+    trash_raw = parser["General"].get("TRASH_FOLDER_PATH", "").strip()
+    trash_dir = (
+        Path(trash_raw).expanduser()
+        if trash_raw
+        else clients_dir.parent / "trash"
+    )
+
     if not clients_dir.is_absolute():
         raise ConfigError(f"CLIENTS_FOLDER_PATH must be absolute, got: {clients_dir}")
     if not wg_conf.is_absolute():
         raise ConfigError(f"WIREGUARD_CONFIG_FILE must be absolute, got: {wg_conf}")
+    if not trash_dir.is_absolute():
+        raise ConfigError(f"TRASH_FOLDER_PATH must be absolute, got: {trash_dir}")
 
     clients_dir = clients_dir.resolve()
+    trash_dir = trash_dir.resolve()
     wg_conf = wg_conf.resolve()
 
-    if not clients_dir.is_absolute():
-        raise ConfigError(f"CLIENTS_FOLDER_PATH must be absolute, got: {clients_dir}")
     if not re.fullmatch(r"\d+\.\d+\.\d+", address_base):
         raise ConfigError(f"ADDRESS_BASE must look like '10.7.0', got: {address_base}")
     if not wg_conf.exists():
@@ -80,6 +89,7 @@ def load_config(path: Path) -> AppConfig:
 
     return AppConfig(
         clients_dir=clients_dir,
+        trash_dir=trash_dir,
         wg_conf=wg_conf,
         endpoint=endpoint,
         dns=dns,

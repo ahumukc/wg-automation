@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import shutil
+from datetime import datetime
 from pathlib import Path
 from string import Template
 
@@ -38,7 +39,19 @@ def create_client_dir(clients_dir: Path, name: str) -> Path:
     return client_dir
 
 
-def delete_client_dir(client_dir: Path) -> None:
+def move_client_to_trash(client_dir: Path, trash_dir: Path,
+                         peer_block: str | None) -> Path:
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    dest = trash_dir / f"{client_dir.name}.{ts}"
+    dest.mkdir(parents=True)
+    if peer_block:
+        atomic_write(dest / "peer.block", peer_block + "\n", mode=0o600)
+    if client_dir.exists():
+        shutil.move(str(client_dir), str(dest / client_dir.name))
+    return dest
+
+
+def delete_client_permanently(client_dir: Path) -> None:
     shutil.rmtree(client_dir)
 
 

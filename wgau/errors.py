@@ -32,3 +32,7 @@ class KeyMismatchError(WgauError):
 
 class QRCodeError(WgauError):
     """QR code generation failed."""
+
+
+class PermissionDeniedError(WgauError):
+    """Not enough privileges for the requested operation (e.g. needs root)."""

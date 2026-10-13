@@ -87,6 +87,7 @@ CLIENT_PREFIX = client
 |----------------------|-----------------------------------------------------------------|----------------------|
 | `CLIENTS_FOLDER_PATH` | абсолютный путь к папке клиентов (создаётся автоматически)      | `/etc/wgau/clients`  |
 | `WIREGUARD_CONFIG_FILE` | путь к конфигу сервера                                        | `/etc/wireguard/wg0.conf` |
+| `TRASH_FOLDER_PATH`  | папка-корзина: туда `delete` переносит папки клиентов и `peer.block` | `/etc/wgau/trash` |
 | `ENDPOINT`           | адрес:порт сервера, попадает в клиентские конфиги               | `vpn.example.com:51820` |
 | `ADDRESS_BASE`       | первые три октета клиентской подсети (из `Address` интерфейса)  | `10.7.0`             |
 | `DNS_SERVER`         | DNS для клиентов (список через запятую)                        | `1.1.1.1, 1.0.0.1`   |
@@ -141,29 +142,14 @@ CLIENT_PREFIX = client
 wgau conf client3        # → Config generated: /etc/wgau/clients/client3/client.conf
 ```
 
-### `wgau delete <name>`
+### `wgau delete <name> [-y] [--permanently]`
 
-Удаляет клиента полностью и безвозвратно:
-
-1. вырезает блок `# BEGIN_PEER <name>` … `# END_PEER <name>` из `wg0.conf`
-   (атомарно, права файла сохраняются);
-2. удаляет папку `clients/<name>/` (`sec.key`, `pub.key`, `psk.key`,
-   `client.conf`, QR-код).
-
-Спрашивает подтверждение; `-y` / `--yes` — без вопроса. Если пира нет в
-`wg0.conf`, но папка есть (или наоборот) — удаляется то, что найдено.
-
-```bash
-wgau delete client2
-# Delete client 'client2' (peer, keys, client.conf, QR)? [y/N] y
-# Peer removed: /etc/wireguard/wg0.conf
-# Folder removed: /etc/wgau/clients/client2
-```
-
-> Безымянный пир (без маркеров) по имени не найти — сначала прогоните `wgau sync`.
-
-После удаления примените изменения, иначе пир продолжит работать до
-перезапуска туннеля: `sudo wg syncconf wg0 <(wg-quick strip wg0)`.
+Удаляет клиента: вырезает блок пира из `wg0.conf` (атомарно), папку клиента
+и вырезанный блок (`peer.block`) переносит в `TRASH_FOLDER_PATH` в подпапку
+`<имя>.<дата-время>` — клиент можно восстановить вручную. `--permanently` —
+удалить папку сразу, без корзины. `-y` — без вопроса. Если пир был в
+`wg0.conf`, в конце автоматически применяется `wg syncconf` к работающему
+интерфейсу. Освободившиеся имя и IP будут выданы следующему `wgau add`.
 
 ### Папка клиента
 
