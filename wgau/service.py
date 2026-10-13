@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from wgau import alloc, files, wg, wgconf
@@ -10,6 +11,7 @@ from wgau.errors import (
     KeyMismatchError,
     PermissionDeniedError,
     Wg0Error,
+    WgauError,
 )
 from wgau.models import KeyPair, Peer, WgInterface
 
@@ -73,6 +75,47 @@ def _used_suffixes(app: AppConfig, peers: list[Peer]) -> set[int]:
     return alloc.used_suffixes(app.address_base, ips)
 
 
+def _try_apply(app: AppConfig) -> None:
+    iface = app.wg_conf.stem
+    try:
+        wg.syncconf(iface, app.wg_conf)
+    except WgauError as e:
+        print(f"warning: could not apply changes to {iface}: {e}", file=sys.stderr)
+        print(f"Apply manually: sudo wg syncconf {iface} <(wg-quick strip {iface})")
+        return
+    print(f"Changes applied to running interface {iface}")
+
+
+def _find_peer_by_name(app: AppConfig, client_name: str) -> Peer:
+    _, peers = wgconf.parse_wg0(app.wg_conf)
+    peer = next((p for p in peers if p.name == client_name), None)
+    if peer is None:
+        raise ClientNotFoundError(
+            f"Peer '{client_name}' not found in {app.wg_conf}"
+        )
+    return peer
+
+
+def revoke_client(app: AppConfig, client_name: str) -> None:
+    peer = _find_peer_by_name(app, client_name)
+    if peer.revoked:
+        print(f"Peer {client_name} is already revoked")
+        return
+    wgconf.set_peer_revoked(app.wg_conf, client_name, revoked=True)
+    print(f"Peer {client_name} revoked in {app.wg_conf}")
+    _try_apply(app)
+
+
+def grant_client(app: AppConfig, client_name: str) -> None:
+    peer = _find_peer_by_name(app, client_name)
+    if not peer.revoked:
+        print(f"Peer {client_name} is not revoked")
+        return
+    wgconf.set_peer_revoked(app.wg_conf, client_name, revoked=False)
+    print(f"Peer {client_name} granted in {app.wg_conf}")
+    _try_apply(app)
+
+
 def add_client(app: AppConfig) -> None:
     app.clients_dir.mkdir(parents=True, exist_ok=True)
     interface, peers = wgconf.parse_wg0(app.wg_conf)
@@ -95,6 +138,7 @@ def add_client(app: AppConfig) -> None:
     print(f"Client {name} generated in {client_dir}")
     print(f"  IP:     {client_ip}")
     print(f"  Config: {client_dir / files.CLIENT_CONF_NAME}")
+    _try_apply(app)
 
 
 def sync_folders(app: AppConfig) -> int:
@@ -171,6 +215,10 @@ def make_conf_from_sec_key(app: AppConfig, client_name: str) -> Path:
     if not client_ip:
         raise Wg0Error(f"Peer {client_name} has no AllowedIPs in wg0.conf")
 
+    if peer.revoked:
+        print(f"Warning: peer {client_name} is revoked — "
+              f"run 'wgau grant {client_name}' to re-enable it")
+
     keys = KeyPair(
         private_key=private_key,
         public_key=public_key,
@@ -236,5 +284,4 @@ def delete_client(app: AppConfig, client_name: str, assume_yes: bool = False,
         print(f"Moved to trash: {dest}")
 
     if peer_block is not None:
-        wg.syncconf(app.wg_conf.stem, app.wg_conf)
-        print(f"Changes applied to running interface {app.wg_conf.stem}")
+        _try_apply(app)

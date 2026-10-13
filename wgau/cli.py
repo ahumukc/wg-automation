@@ -31,6 +31,16 @@ def build_parser() -> argparse.ArgumentParser:
     delete.add_argument("--permanently", action="store_true",
                         help="Delete files completely instead of moving to trash")
 
+    revoke = sub.add_parser(
+        "revoke", help="Disable client: comment out its peer in wg0.conf"
+    )
+    revoke.add_argument("client_name", help="Client name, e.g. client1")
+
+    grant = sub.add_parser(
+        "grant", help="Re-enable revoked client: uncomment its peer"
+    )
+    grant.add_argument("client_name", help="Client name, e.g. client1")
+
     return parser
 
 
@@ -66,6 +76,10 @@ def main(argv: list[str] | None = None) -> int:
                 assume_yes=args.yes,
                 permanently=args.permanently,
             )
+        elif args.command == "revoke":
+            service.revoke_client(app, args.client_name)
+        elif args.command == "grant":
+            service.grant_client(app, args.client_name)
     except WgauError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

@@ -56,3 +56,18 @@ def fake_wg(monkeypatch) -> KeyPair:
     monkeypatch.setattr(wg, "generate_keys", lambda: keys)
     monkeypatch.setattr(wg, "derive_public_key", fake_derive)
     return keys
+
+
+class SyncStub:
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, interface: str, conf_path: Path) -> None:
+        self.calls.append((interface, conf_path))
+
+
+@pytest.fixture()
+def sync_stub(monkeypatch) -> SyncStub:
+    stub = SyncStub()
+    monkeypatch.setattr(wg, "syncconf", stub)
+    return stub

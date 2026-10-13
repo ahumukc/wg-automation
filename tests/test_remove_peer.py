@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from wgau import service, wg as wg_module, wgconf
+from wgau import service, wgconf
 from wgau.config import AppConfig
 from wgau.errors import ClientNotFoundError, PermissionDeniedError
 
@@ -24,21 +24,6 @@ WG0_TEXT = (
     "AllowedIPs = 10.7.0.3/32\n"
     "# END_PEER client2\n"
 )
-
-
-class SyncStub:
-    def __init__(self):
-        self.calls = []
-
-    def __call__(self, interface: str, conf_path: Path) -> None:
-        self.calls.append((interface, conf_path))
-
-
-@pytest.fixture
-def sync_stub(monkeypatch) -> SyncStub:
-    stub = SyncStub()
-    monkeypatch.setattr(wg_module, "syncconf", stub)
-    return stub
 
 
 def make_app(tmp_path: Path) -> AppConfig:

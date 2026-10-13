@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from typing import Callable
 
-from wgau.errors import PeerExistsError, Wg0Error
+from wgau.errors import ClientNotFoundError, PeerExistsError, Wg0Error
 from wgau.models import Peer, WgInterface
 from wgau.utils import atomic_write
 
@@ -32,7 +32,18 @@ def parse_wg0(path: Path) -> tuple[WgInterface, list[Peer]]:
         if END_PEER_RE.fullmatch(stripped):
             current = None
             continue
-        if not stripped or stripped.startswith("#"):
+        if not stripped:
+            continue
+
+        if stripped.startswith("#"):
+            if isinstance(current, Peer) and current.name is not None:
+                content = stripped[1:].strip()
+                if content and not content.startswith("#"):
+                    if content == "[Peer]" and not current.params:
+                        current.revoked = True
+                    elif current.revoked and "=" in content:
+                        key, _, value = content.partition("=")
+                        current.params[key.strip()] = value.strip()
             continue
 
         if stripped.startswith("[") and stripped.endswith("]"):
@@ -130,6 +141,66 @@ def remove_peer(path: Path, name: str) -> str | None:
     mode = path.stat().st_mode & 0o777
     atomic_write(path, "\n".join(out).rstrip("\n") + "\n", mode=mode)
     return "\n".join(block)
+
+
+def set_peer_revoked(path: Path, name: str, revoked: bool) -> None:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as e:
+        raise Wg0Error(f"Cannot read {path}: {e}") from e
+
+    out: list[str] = []
+    inside = False
+    found = False
+
+    for line in lines:
+        stripped = line.strip()
+
+        if not inside:
+            m = BEGIN_PEER_RE.fullmatch(stripped)
+            if m and m.group(1) == name:
+                inside = True
+                found = True
+            out.append(line)
+            continue
+
+        m = END_PEER_RE.fullmatch(stripped)
+        if m:
+            if m.group(1) != name:
+                raise Wg0Error(
+                    f"Malformed {path}: expected '# END_PEER {name}', "
+                    f"got {stripped!r}"
+                )
+            inside = False
+            out.append(line)
+            continue
+        if BEGIN_PEER_RE.fullmatch(stripped):
+            raise Wg0Error(
+                f"Malformed {path}: unexpected marker {stripped!r} "
+                f"inside '# BEGIN_PEER {name}' block"
+            )
+
+        if not stripped:
+            out.append(line)
+            continue
+
+        if revoked:
+            out.append("#" + line)
+        elif stripped.startswith("#"):
+            idx = line.find("#")
+            out.append(line[:idx] + line[idx + 1:])
+        else:
+            out.append(line)
+
+    if inside:
+        raise Wg0Error(
+            f"Malformed {path}: '# BEGIN_PEER {name}' without matching END_PEER"
+        )
+    if not found:
+        raise ClientNotFoundError(f"Peer {name} not found in {path}")
+
+    mode = path.stat().st_mode & 0o777
+    atomic_write(path, "\n".join(out) + "\n", mode=mode)
 
 
 def name_unnamed_peers(path: Path, new_name: Callable[[], str]) -> int:

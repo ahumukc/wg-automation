@@ -22,6 +22,7 @@ class WgInterface:
 @dataclass
 class Peer:
     name: str | None = field(default=None)
+    revoked: bool = False
     params: dict[str, str] = field(default_factory=dict)
 
     @property
