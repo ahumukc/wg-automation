@@ -42,6 +42,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     grant.add_argument("client_name", help="Client name, e.g. client1")
 
+    rename = sub.add_parser(
+        "rename", help="Set display title for client (empty clears it)"
+    )
+    rename.add_argument("client_name", help="Client name, e.g. client1")
+    rename.add_argument("title", nargs="?", default="",
+                        help="Display title stored in the database; "
+                             "omit it or pass an empty string to clear")
+
     return parser
 
 
@@ -83,6 +91,8 @@ def main(argv: list[str] | None = None) -> int:
             service.revoke_client(app, args.client_name)
         elif args.command == "grant":
             service.grant_client(app, args.client_name)
+        elif args.command == "rename":
+            service.rename_client(app, args.client_name, args.title)
     except WgauError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

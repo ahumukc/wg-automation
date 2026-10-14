@@ -15,10 +15,15 @@ from wgau.models import Peer
 # deleted_at = 0 значит «пир жив» и входит в PRIMARY KEY (name, deleted_at):
 # при удалении client1 его строка уходит в архив с уникальной меткой
 # deleted_at, освобождая имя client1 для нового клиента. История сохраняется.
+#
+# title — отображаемое название клиента («Ноутбук Ани»). Его нет в wg0.conf,
+# поэтому как метаданные БД (expires_at) оно переживает пересборку из файла;
+# NULL/'' значит «название не задано».
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS peers (
     name          TEXT    NOT NULL,
+    title         TEXT,
     deleted_at    INTEGER NOT NULL DEFAULT 0,
     internal_ip   TEXT    NOT NULL,
     public_key    TEXT    NOT NULL UNIQUE,
@@ -49,6 +54,7 @@ ON CONFLICT (public_key) DO UPDATE SET
     status        = excluded.status,
     expires_at    = COALESCE(:expires_at, peers.expires_at),
     updated_at    = excluded.updated_at
+-- title намеренно не трогаем: это метаданные БД, их нет в wg0.conf
 """
 
 # одноимённый «прошлый» пир (другие ключи) уходит в архив перед вставкой
@@ -128,10 +134,22 @@ def init_db(path: Path) -> None:
     try:
         with conn:
             conn.executescript(SCHEMA)
+            _migrate(conn)
     except sqlite3.Error as e:
         raise DbError(f"cannot initialize {path}: {e}") from e
     finally:
         conn.close()
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Добавить поля, появившиеся в SCHEMA после создания базы.
+
+    CREATE TABLE IF NOT EXISTS не меняет уже существующую таблицу,
+    поэтому новую колонку доводим через ALTER TABLE.
+    """
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(peers)")}
+    if "title" not in cols:
+        conn.execute("ALTER TABLE peers ADD COLUMN title TEXT")
 
 
 def _upsert_live(conn: sqlite3.Connection, *, name: str, internal_ip: str,
@@ -233,14 +251,48 @@ def list_rows(path: Path) -> list[sqlite3.Row]:
     """Все строки: сначала живые (deleted_at = 0), затем архив по времени."""
     if not path.exists():
         return []
+    init_db(path)  # на случай базы, созданной предыдущей версией схемы
     conn = connect(path)
     try:
         return conn.execute(
-            "SELECT name, internal_ip, public_key, preshared_key, status,"
-            " expires_at, deleted_at, created_at"
+            "SELECT name, title, internal_ip, public_key, preshared_key,"
+            " status, expires_at, deleted_at, created_at"
             " FROM peers ORDER BY deleted_at, name"
         ).fetchall()
     except sqlite3.Error as e:
         raise DbError(f"cannot read {path}: {e}") from e
     finally:
         conn.close()
+
+
+def find_live(path: Path, name: str) -> sqlite3.Row | None:
+    """Живая строка пира по имени (deleted_at = 0) или None, если клиента нет."""
+    if not path.exists():
+        return None
+    init_db(path)  # на случай базы, созданной предыдущей версией схемы
+    conn = connect(path)
+    try:
+        return conn.execute(
+            "SELECT name, title FROM peers WHERE name = ? AND deleted_at = 0",
+            (name,),
+        ).fetchone()
+    except sqlite3.Error as e:
+        raise DbError(f"cannot read {path}: {e}") from e
+    finally:
+        conn.close()
+
+
+def set_peer_title(path: Path, name: str, title: str | None) -> None:
+    """Задать/очистить отображаемое название живого пира.
+
+    Пустая строка/пробелы → NULL: в БД название либо отсутствует,
+    либо является непустым.
+    """
+    value = (title or "").strip() or None
+    init_db(path)
+    with write_txn(path) as conn:
+        conn.execute(
+            "UPDATE peers SET title = ?, updated_at = ?"
+            " WHERE name = ? AND deleted_at = 0",
+            (value, now_us(), name),
+        )

@@ -7,6 +7,8 @@ import pytest
 from wgau import db, service, wg, wgconf
 from wgau.errors import (
     ClientNotFoundError,
+    DbError,
+    InvalidTitleError,
     KeyMismatchError,
     NoFreeIPError,
     Wg0Error,
@@ -202,6 +204,110 @@ class TestSyncFolders:
         snapshot = app.wg_conf.read_text()
         assert service.sync_folders(app) == 0
         assert app.wg_conf.read_text() == snapshot
+
+
+class TestRenameClient:
+    def test_sets_title(self, app, fake_wg, sync_stub, capsys):
+        service.add_client(app)
+        service.rename_client(app, "client1", "Ноутбук Ани")
+
+        rows = db.list_rows(app.db_path)
+        assert len(rows) == 1
+        assert rows[0]["name"] == "client1"
+        assert rows[0]["title"] == "Ноутбук Ани"
+        assert "title set to 'Ноутбук Ани'" in capsys.readouterr().out
+
+        # идентификатор, папка и wg0.conf не меняются
+        assert "# BEGIN_PEER client1" in app.wg_conf.read_text()
+        assert (app.clients_dir / "client1").is_dir()
+
+    def test_empty_title_clears(self, app, fake_wg, sync_stub, capsys):
+        service.add_client(app)
+        service.rename_client(app, "client1", "Телефон")
+        service.rename_client(app, "client1", "")
+
+        assert db.list_rows(app.db_path)[0]["title"] is None
+        assert "title cleared" in capsys.readouterr().out
+
+    def test_whitespace_title_clears(self, app, fake_wg, sync_stub):
+        service.add_client(app)
+        service.rename_client(app, "client1", "   ")
+        assert db.list_rows(app.db_path)[0]["title"] is None
+
+    def test_strips_surrounding_spaces(self, app, fake_wg, sync_stub):
+        service.add_client(app)
+        service.rename_client(app, "client1", "  Alice  ")
+        assert db.list_rows(app.db_path)[0]["title"] == "Alice"
+
+    def test_overwrites_previous_title(self, app, fake_wg, sync_stub):
+        service.add_client(app)
+        service.rename_client(app, "client1", "Первый")
+        service.rename_client(app, "client1", "Второй")
+        rows = db.list_rows(app.db_path)
+        assert len(rows) == 1
+        assert rows[0]["title"] == "Второй"
+
+    def test_revoked_client_can_be_renamed(self, app, fake_wg, sync_stub):
+        service.add_client(app)
+        service.revoke_client(app, "client1")
+        service.rename_client(app, "client1", "Отозванный")
+
+        rows = db.list_rows(app.db_path)
+        assert rows[0]["status"] == "revoked"
+        assert rows[0]["title"] == "Отозванный"
+
+    def test_unknown_client(self, app, fake_wg, sync_stub):
+        service.add_client(app)
+        with pytest.raises(ClientNotFoundError):
+            service.rename_client(app, "client9", "X")
+        assert db.list_rows(app.db_path)[0]["title"] is None
+
+    def test_deleted_client_cannot_be_renamed(self, app, fake_wg, sync_stub):
+        service.add_client(app)
+        service.delete_client(app, "client1", assume_yes=True)
+        with pytest.raises(ClientNotFoundError):
+            service.rename_client(app, "client1", "X")
+
+    def test_invalid_client_name(self, app, fake_wg, sync_stub):
+        service.add_client(app)
+        for bad in ("", "../etc", "a/b"):
+            with pytest.raises(ClientNotFoundError):
+                service.rename_client(app, bad, "X")
+
+    def test_multiline_title_rejected(self, app, fake_wg, sync_stub):
+        service.add_client(app)
+        with pytest.raises(InvalidTitleError):
+            service.rename_client(app, "client1", "первая\nвторая")
+        assert db.list_rows(app.db_path)[0]["title"] is None
+
+    def test_long_title_rejected(self, app, fake_wg, sync_stub):
+        service.add_client(app)
+        with pytest.raises(InvalidTitleError):
+            service.rename_client(app, "client1", "x" * 201)
+        assert db.list_rows(app.db_path)[0]["title"] is None
+
+    def test_db_failure_is_only_warning(self, app, fake_wg, sync_stub,
+                                       capsys, monkeypatch):
+        service.add_client(app)
+
+        def boom(*args, **kwargs):
+            raise DbError("disk on fire")
+
+        monkeypatch.setattr(db, "set_peer_title", boom)
+        service.rename_client(app, "client1", "X")
+        assert "warning: database not updated: disk on fire" \
+            in capsys.readouterr().err
+
+    def test_db_missing_rebuilt_from_wg0(self, app, fake_wg, sync_stub):
+        service.add_client(app)
+        app.db_path.unlink()
+        assert not app.db_path.exists()
+
+        service.rename_client(app, "client1", "Планшет")
+        rows = db.list_rows(app.db_path)
+        assert len(rows) == 1
+        assert rows[0]["name"] == "client1"
+        assert rows[0]["title"] == "Планшет"
 
 
 class TestShowQr:

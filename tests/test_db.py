@@ -229,6 +229,128 @@ class TestArchiveAndRecreate:
         assert rows[0]["public_key"] == "A"
 
 
+class TestTitle:
+    def test_new_db_has_title_null(self, tmp_path):
+        path = tmp_path / "wgau.db"
+        upsert(path, "client1", "10.7.0.2", "A")
+        rows = db.list_rows(path)
+        assert rows[0]["title"] is None
+
+    def test_set_and_clear(self, tmp_path):
+        path = tmp_path / "wgau.db"
+        upsert(path, "client1", "10.7.0.2", "A")
+        db.set_peer_title(path, "client1", "Ноутбук Ани")
+        assert db.list_rows(path)[0]["title"] == "Ноутбук Ани"
+        assert db.find_live(path, "client1")["title"] == "Ноутбук Ани"
+
+        db.set_peer_title(path, "client1", None)
+        assert db.list_rows(path)[0]["title"] is None
+        assert db.find_live(path, "client1")["title"] is None
+
+    def test_empty_string_means_no_title(self, tmp_path):
+        path = tmp_path / "wgau.db"
+        upsert(path, "client1", "10.7.0.2", "A")
+        db.set_peer_title(path, "client1", "Телефон")
+        db.set_peer_title(path, "client1", "  ")
+        assert db.list_rows(path)[0]["title"] is None
+
+    def test_strips_title(self, tmp_path):
+        path = tmp_path / "wgau.db"
+        upsert(path, "client1", "10.7.0.2", "A")
+        db.set_peer_title(path, "client1", "  Alice  ")
+        assert db.list_rows(path)[0]["title"] == "Alice"
+
+    def test_set_on_unknown_name_is_noop(self, tmp_path):
+        path = tmp_path / "wgau.db"
+        db.set_peer_title(path, "ghost", "X")
+        assert db.list_rows(path) == []
+
+    def test_find_live(self, tmp_path):
+        path = tmp_path / "wgau.db"
+        upsert(path, "client1", "10.7.0.2", "A")
+        db.archive_peer(path, "client1")
+        assert db.find_live(path, "client1") is None
+        assert db.find_live(path, "ghost") is None
+
+    def test_survives_rebuild_from_wg0(self, tmp_path):
+        path = tmp_path / "wgau.db"
+        db.rebuild_from_wg0(path, parse(WG0_ONE_PEER, tmp_path))
+        db.set_peer_title(path, "client1", "Телефон")
+        db.rebuild_from_wg0(path, parse(WG0_ONE_PEER, tmp_path))
+        assert db.list_rows(path)[0]["title"] == "Телефон"
+
+    def test_survives_upsert_with_same_key(self, tmp_path):
+        path = tmp_path / "wgau.db"
+        upsert(path, "client1", "10.7.0.2", "PUBA")
+        db.set_peer_title(path, "client1", "Планшет")
+        upsert(path, "client1", "10.7.0.2", "PUBA", status="revoked")
+        rows = db.list_rows(path)
+        assert len(rows) == 1
+        assert rows[0]["status"] == "revoked"
+        assert rows[0]["title"] == "Планшет"
+
+    def test_archived_row_keeps_title_new_row_has_none(self, tmp_path):
+        path = tmp_path / "wgau.db"
+        upsert(path, "client1", "10.7.0.2", "A")
+        db.set_peer_title(path, "client1", "Старый")
+        db.archive_peer(path, "client1")
+        upsert(path, "client1", "10.7.0.2", "B")
+
+        rows = {r["status"]: r for r in db.list_rows(path)}
+        assert rows["deleted"]["title"] == "Старый"
+        assert rows["active"]["title"] is None
+
+
+class TestMigrateTitle:
+    """Базы, созданные до появления title, достраиваются через ALTER TABLE."""
+
+    OLD_SCHEMA = """
+    CREATE TABLE peers (
+        name          TEXT    NOT NULL,
+        deleted_at    INTEGER NOT NULL DEFAULT 0,
+        internal_ip   TEXT    NOT NULL,
+        public_key    TEXT    NOT NULL UNIQUE,
+        preshared_key TEXT,
+        status        TEXT    NOT NULL DEFAULT 'active'
+                      CHECK (status IN ('active', 'revoked', 'deleted')),
+        expires_at    INTEGER,
+        created_at    INTEGER NOT NULL,
+        updated_at    INTEGER NOT NULL,
+        PRIMARY KEY (name, deleted_at)
+    );
+    """
+
+    def old_db(self, tmp_path) -> Path:
+        path = tmp_path / "wgau.db"
+        conn = db.connect(path)
+        conn.executescript(self.OLD_SCHEMA)
+        conn.execute(
+            "INSERT INTO peers (name, internal_ip, public_key, created_at,"
+            " updated_at) VALUES ('client1', '10.7.0.2', 'A', 1, 1)"
+        )
+        conn.commit()
+        conn.close()
+        return path
+
+    def test_write_migrates(self, tmp_path):
+        path = self.old_db(tmp_path)
+        upsert(path, "client1", "10.7.0.2", "A")
+        rows = db.list_rows(path)
+        assert len(rows) == 1
+        assert rows[0]["title"] is None
+
+    def test_read_migrates(self, tmp_path):
+        path = self.old_db(tmp_path)
+        rows = db.list_rows(path)
+        assert len(rows) == 1
+        assert rows[0]["name"] == "client1"
+        assert rows[0]["title"] is None
+
+    def test_read_migrates_for_find_live(self, tmp_path):
+        path = self.old_db(tmp_path)
+        assert db.find_live(path, "client1")["title"] is None
+
+
 class TestListRows:
     def test_live_before_history(self, tmp_path):
         path = tmp_path / "wgau.db"

@@ -9,6 +9,7 @@ from wgau.config import AppConfig
 from wgau.errors import (
     ClientNotFoundError,
     DbError,
+    InvalidTitleError,
     KeyMismatchError,
     PermissionDeniedError,
     Wg0Error,
@@ -133,6 +134,50 @@ def grant_client(app: AppConfig, client_name: str) -> None:
         public_key=peer.public_key, preshared_key=peer.psk, status="active",
     ))
     _try_apply(app)
+
+
+def _normalize_title(title: str) -> str | None:
+    """Пустая строка/пробелы → None (название не задано), иначе проверка."""
+    value = title.strip()
+    if not value:
+        return None
+    if "\n" in value or "\r" in value:
+        raise InvalidTitleError("Title must be a single line")
+    if len(value) > 200:
+        raise InvalidTitleError("Title is too long (max 200 characters)")
+    return value
+
+
+def rename_client(app: AppConfig, client_name: str, title: str) -> None:
+    """Задать отображаемое название клиента; пустая строка — очистить.
+
+    Название живёт только в БД: имя clientN, папка клиента и пир в wg0.conf
+    не меняются — команда лишь обновляет проекцию.
+    """
+    if not client_name or Path(client_name).name != client_name:
+        raise ClientNotFoundError(f"Invalid client name: '{client_name}'")
+    title = _normalize_title(title)
+
+    if not app.db_path.exists():
+        # первый запуск: собираем БД из wg0.conf, как это делает `wgau peers`
+        _, peers = wgconf.parse_wg0(app.wg_conf)
+        db.rebuild_from_wg0(app.db_path, peers)
+
+    if db.find_live(app.db_path, client_name) is None:
+        raise ClientNotFoundError(
+            f"Client '{client_name}' not found in {app.db_path} — "
+            f"run 'wgau sync' to rebuild the database"
+        )
+
+    if not _db_apply(
+        app, lambda: db.set_peer_title(app.db_path, client_name, title)
+    ):
+        return  # БД — advisory-кэш: пишем предупреждение и выходим
+
+    if title:
+        print(f"Client {client_name} title set to '{title}'")
+    else:
+        print(f"Client {client_name} title cleared")
 
 
 def add_client(app: AppConfig) -> None:
@@ -331,9 +376,10 @@ def list_peers(app: AppConfig) -> None:
         print(f"No peers in {app.db_path} — run 'wgau sync'")
         return
 
-    print(f"{'NAME':<16} {'IP':<12} {'STATUS':<8} {'EXPIRES':<17} "
-          f"{'CREATED':<17} DELETED")
+    print(f"{'NAME':<16} {'TITLE':<24} {'IP':<12} {'STATUS':<8} "
+          f"{'EXPIRES':<17} {'CREATED':<17} DELETED")
     for r in rows:
-        print(f"{r['name']:<16} {r['internal_ip']:<12} {r['status']:<8} "
+        print(f"{r['name']:<16} {(r['title'] or '-'):<24.24} "
+              f"{r['internal_ip']:<12} {r['status']:<8} "
               f"{db.fmt_us(r['expires_at']):<17} {db.fmt_us(r['created_at']):<17} "
               f"{db.fmt_us(r['deleted_at'])}")

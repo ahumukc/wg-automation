@@ -30,6 +30,10 @@ class KeyMismatchError(WgauError):
     """sec.key does not match pub.key."""
 
 
+class InvalidTitleError(WgauError):
+    """Display title has an unsupported format (multiline, too long, ...)."""
+
+
 class QRCodeError(WgauError):
     """QR code generation failed."""
 

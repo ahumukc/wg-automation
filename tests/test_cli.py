@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from wgau import cli, config, service
+from wgau import cli, config, db, service
 from wgau.errors import WgauError
 
 
@@ -63,6 +63,18 @@ class TestParser:
     def test_peers(self):
         assert cli.build_parser().parse_args(["peers"]).command == "peers"
 
+    def test_rename(self):
+        args = cli.build_parser().parse_args(["rename", "client3", "Alice PC"])
+        assert (args.command, args.client_name, args.title) == (
+            "rename", "client3", "Alice PC"
+        )
+
+    def test_rename_title_optional(self):
+        args = cli.build_parser().parse_args(["rename", "client3"])
+        assert (args.command, args.client_name, args.title) == (
+            "rename", "client3", ""
+        )
+
 
 class TestDispatch:
     def test_add(self, monkeypatch, app, tmp_path):
@@ -91,6 +103,16 @@ class TestDispatch:
         monkeypatch.setattr(service, "show_qr", lambda a, name: seen.append(name))
         assert cli.main(["show", "client9"]) == 0
         assert seen == ["client9"]
+
+    def test_rename(self, monkeypatch, app, tmp_path):
+        stub(monkeypatch, app, tmp_path)
+        seen = []
+        monkeypatch.setattr(
+            service, "rename_client",
+            lambda a, name, title: seen.append((name, title)),
+        )
+        assert cli.main(["rename", "client1", "Alice"]) == 0
+        assert seen == [("client1", "Alice")]
 
     def test_conf(self, monkeypatch, app, tmp_path, capsys):
         stub(monkeypatch, app, tmp_path)
@@ -148,3 +170,12 @@ class TestEndToEnd:
         assert "Client client1 generated" in capsys.readouterr().out
         assert (app.clients_dir / "client1" / "client.conf").exists()
         assert "# BEGIN_PEER client1" in app.wg_conf.read_text()
+
+    def test_rename_sets_title(self, app, fake_wg, conf_file, monkeypatch):
+        monkeypatch.setattr(config, "default_config_path", lambda: conf_file)
+        assert cli.main(["add"]) == 0
+        assert cli.main(["rename", "client1", "Alice"]) == 0
+
+        rows = db.list_rows(app.db_path)
+        assert len(rows) == 1
+        assert (rows[0]["name"], rows[0]["title"]) == ("client1", "Alice")
