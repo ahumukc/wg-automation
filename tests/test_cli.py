@@ -60,6 +60,9 @@ class TestParser:
         with pytest.raises(SystemExit):
             cli.build_parser().parse_args([])
 
+    def test_peers(self):
+        assert cli.build_parser().parse_args(["peers"]).command == "peers"
+
 
 class TestDispatch:
     def test_add(self, monkeypatch, app, tmp_path):
@@ -74,6 +77,13 @@ class TestDispatch:
         monkeypatch.setattr(service, "sync_folders", lambda a: 3)
         assert cli.main(["sync"]) == 0
         assert "Created 3 folder(s)" in capsys.readouterr().out
+
+    def test_peers(self, monkeypatch, app, tmp_path):
+        stub(monkeypatch, app, tmp_path)
+        seen = []
+        monkeypatch.setattr(service, "list_peers", seen.append)
+        assert cli.main(["peers"]) == 0
+        assert seen == [app]
 
     def test_show(self, monkeypatch, app, tmp_path):
         stub(monkeypatch, app, tmp_path)

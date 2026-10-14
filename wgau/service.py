@@ -4,10 +4,11 @@ import os
 import sys
 from pathlib import Path
 
-from wgau import alloc, files, wg, wgconf
+from wgau import alloc, db, files, wg, wgconf
 from wgau.config import AppConfig
 from wgau.errors import (
     ClientNotFoundError,
+    DbError,
     KeyMismatchError,
     PermissionDeniedError,
     Wg0Error,
@@ -86,6 +87,16 @@ def _try_apply(app: AppConfig) -> None:
     print(f"Changes applied to running interface {iface}")
 
 
+def _db_apply(app: AppConfig, action) -> bool:
+    """БД — advisory-кэш: её сбой не должен ломать команду над wg0.conf."""
+    try:
+        action()
+        return True
+    except DbError as e:
+        print(f"warning: database not updated: {e}", file=sys.stderr)
+        return False
+
+
 def _find_peer_by_name(app: AppConfig, client_name: str) -> Peer:
     _, peers = wgconf.parse_wg0(app.wg_conf)
     peer = next((p for p in peers if p.name == client_name), None)
@@ -103,6 +114,10 @@ def revoke_client(app: AppConfig, client_name: str) -> None:
         return
     wgconf.set_peer_revoked(app.wg_conf, client_name, revoked=True)
     print(f"Peer {client_name} revoked in {app.wg_conf}")
+    _db_apply(app, lambda: db.upsert_live(
+        app.db_path, name=client_name, internal_ip=peer.first_ip or "",
+        public_key=peer.public_key, preshared_key=peer.psk, status="revoked",
+    ))
     _try_apply(app)
 
 
@@ -113,6 +128,10 @@ def grant_client(app: AppConfig, client_name: str) -> None:
         return
     wgconf.set_peer_revoked(app.wg_conf, client_name, revoked=False)
     print(f"Peer {client_name} granted in {app.wg_conf}")
+    _db_apply(app, lambda: db.upsert_live(
+        app.db_path, name=client_name, internal_ip=peer.first_ip or "",
+        public_key=peer.public_key, preshared_key=peer.psk, status="active",
+    ))
     _try_apply(app)
 
 
@@ -138,6 +157,10 @@ def add_client(app: AppConfig) -> None:
     print(f"Client {name} generated in {client_dir}")
     print(f"  IP:     {client_ip}")
     print(f"  Config: {client_dir / files.CLIENT_CONF_NAME}")
+    _db_apply(app, lambda: db.upsert_live(
+        app.db_path, name=name, internal_ip=client_ip,
+        public_key=keys.public_key, preshared_key=keys.psk, status="active",
+    ))
     _try_apply(app)
 
 
@@ -178,6 +201,9 @@ def sync_folders(app: AppConfig) -> int:
               f"generated. Put sec.key into the folder and run "
               f"'wgau conf {name}'.")
         created += 1
+
+    if _db_apply(app, lambda: db.rebuild_from_wg0(app.db_path, peers)):
+        print(f"Database updated: {app.db_path}")
 
     return created
 
@@ -240,7 +266,8 @@ def delete_client(app: AppConfig, client_name: str, assume_yes: bool = False,
     client_dir = app.clients_dir / client_name
 
     _, peers = wgconf.parse_wg0(app.wg_conf)
-    peer_exists = any(p.name == client_name for p in peers)
+    peer = next((p for p in peers if p.name == client_name), None)
+    peer_exists = peer is not None
     folder_exists = client_dir.is_dir()
 
     if not peer_exists and not folder_exists:
@@ -285,3 +312,28 @@ def delete_client(app: AppConfig, client_name: str, assume_yes: bool = False,
 
     if peer_block is not None:
         _try_apply(app)
+
+    if peer is not None:
+        _db_apply(app, lambda: db.archive_peer(
+            app.db_path, client_name, peer=peer
+        ))
+
+
+def list_peers(app: AppConfig) -> None:
+    """Показать содержимое БД; при первом запуске — собрать её из wg0.conf."""
+    if not app.db_path.exists():
+        _, peers = wgconf.parse_wg0(app.wg_conf)
+        db.rebuild_from_wg0(app.db_path, peers)
+        print(f"Database initialized from {app.wg_conf}: {app.db_path}")
+
+    rows = db.list_rows(app.db_path)
+    if not rows:
+        print(f"No peers in {app.db_path} — run 'wgau sync'")
+        return
+
+    print(f"{'NAME':<16} {'IP':<12} {'STATUS':<8} {'EXPIRES':<17} "
+          f"{'CREATED':<17} DELETED")
+    for r in rows:
+        print(f"{r['name']:<16} {r['internal_ip']:<12} {r['status']:<8} "
+              f"{db.fmt_us(r['expires_at']):<17} {db.fmt_us(r['created_at']):<17} "
+              f"{db.fmt_us(r['deleted_at'])}")

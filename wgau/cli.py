@@ -15,6 +15,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("add", help="Add new client (keys + folder + peer in wg0.conf)")
     sub.add_parser("sync", help="Create folders for existing peers from wg0.conf")
+    sub.add_parser("peers", help="List peers from the local database")
 
     show = sub.add_parser("show", help="Show QR code for client")
     show.add_argument("client_name", help="Client name, e.g. client1")
@@ -63,6 +64,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "sync":
             created = service.sync_folders(app)
             print(f"Created {created} folder(s)")
+        elif args.command == "peers":
+            service.list_peers(app)
         elif args.command == "show":
             service.show_qr(app, args.client_name)
         elif args.command == "conf":

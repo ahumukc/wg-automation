@@ -35,6 +35,7 @@ def app(clients_dir: Path, wg0: Path) -> AppConfig:
         clients_dir=clients_dir,
         trash_dir=clients_dir.parent / "trash",
         wg_conf=wg0,
+        db_path=clients_dir.parent / "wgau.db",
         endpoint="vpn.example.com:51820",
         dns="1.1.1.1",
         address_base="10.7.0",

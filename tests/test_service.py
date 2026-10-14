@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
-from wgau import service
+from wgau import db, service, wg, wgconf
 from wgau.errors import (
     ClientNotFoundError,
     KeyMismatchError,
     NoFreeIPError,
     Wg0Error,
 )
+from wgau.models import KeyPair
 
 WG0_ONE_PEER = (
     "[Interface]\n"
@@ -79,6 +82,80 @@ class TestAddClient:
             service.add_client(app)
         assert "BEGIN_PEER" not in app.wg_conf.read_text()
         assert not (app.clients_dir / "client1").exists()
+
+    def test_db_row_created(self, app, fake_wg, sync_stub):
+        service.add_client(app)
+
+        rows = db.list_rows(app.db_path)
+        assert len(rows) == 1
+        r = rows[0]
+        assert r["name"] == "client1"
+        assert r["internal_ip"] == "10.7.0.2"
+        assert r["public_key"] == "CLIENT_PUB"
+        assert r["preshared_key"] == "CLIENT_PSK"
+        assert r["status"] == "active"
+        assert r["deleted_at"] == 0
+        assert r["expires_at"] is None
+
+    def test_db_failure_is_only_warning(self, app, fake_wg, sync_stub,
+                                        capsys):
+        broken = replace(app, db_path=app.clients_dir)  # директория, не файл
+        service.add_client(broken)
+
+        assert (broken.clients_dir / "client1" / "client.conf").exists()
+        assert "warning: database not updated" in capsys.readouterr().err
+
+
+class TestDbHistory:
+    def test_delete_then_recreate_same_name(self, app, fake_wg, sync_stub,
+                                            monkeypatch):
+        app.wg_conf.write_text(WG0_ONE_PEER)  # client1 с OLD_PUB и IP .2
+        service.sync_folders(app)
+        assert len(db.list_rows(app.db_path)) == 1
+
+        service.delete_client(app, "client1", assume_yes=True)
+
+        rows = db.list_rows(app.db_path)
+        assert len(rows) == 1
+        assert rows[0]["status"] == "deleted"
+        assert rows[0]["public_key"] == "OLD_PUB"
+        assert rows[0]["deleted_at"] > 0
+
+        # папки и пира client1 больше нет — имя свободно, ключи новые
+        monkeypatch.setattr(wg, "generate_keys",
+                            lambda: KeyPair("S2", "PUB2", "PSK2"))
+        service.add_client(app)
+
+        rows = db.list_rows(app.db_path)
+        assert len(rows) == 2
+        live = [r for r in rows if r["status"] == "active"]
+        history = [r for r in rows if r["status"] == "deleted"]
+        assert len(live) == 1 and len(history) == 1
+        assert live[0]["name"] == "client1"
+        assert live[0]["public_key"] == "PUB2"
+        assert live[0]["internal_ip"] == "10.7.0.2"  # IP переиспользован
+        assert history[0]["name"] == "client1"
+        assert history[0]["public_key"] == "OLD_PUB"
+
+    def test_sync_archives_manually_removed_peer(self, app, fake_wg,
+                                                  monkeypatch, sync_stub):
+        # wg genkey всегда уникален — повторяем это в фикстуре
+        keys = iter([KeyPair("S1", "PUB1", "PSK1"),
+                     KeyPair("S2", "PUB2", "PSK2")])
+        monkeypatch.setattr(wg, "generate_keys", lambda: next(keys))
+        service.add_client(app)
+        service.add_client(app)
+        assert len(db.list_rows(app.db_path)) == 2
+
+        wgconf.remove_peer(app.wg_conf, "client2")  # ручное удаление блока
+        service.sync_folders(app)
+
+        rows = {r["name"]: r for r in db.list_rows(app.db_path)}
+        assert rows["client1"]["status"] == "active"
+        assert rows["client1"]["public_key"] == "PUB1"
+        assert rows["client2"]["status"] == "deleted"
+        assert rows["client2"]["public_key"] == "PUB2"
+        assert rows["client2"]["deleted_at"] > 0
 
 
 class TestSyncFolders:

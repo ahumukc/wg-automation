@@ -17,6 +17,7 @@ class AppConfig:
     clients_dir: Path
     trash_dir: Path
     wg_conf: Path
+    db_path: Path
     endpoint: str
     dns: str
     address_base: str
@@ -70,6 +71,7 @@ def load_config(path: Path) -> AppConfig:
         if trash_raw
         else clients_dir.parent / "trash"
     )
+    db_raw = parser["General"].get("DATABASE_PATH", "").strip()
 
     if not clients_dir.is_absolute():
         raise ConfigError(f"CLIENTS_FOLDER_PATH must be absolute, got: {clients_dir}")
@@ -78,9 +80,14 @@ def load_config(path: Path) -> AppConfig:
     if not trash_dir.is_absolute():
         raise ConfigError(f"TRASH_FOLDER_PATH must be absolute, got: {trash_dir}")
 
+    db_path = Path(db_raw).expanduser() if db_raw else clients_dir.parent / "wgau.db"
+    if not db_path.is_absolute():
+        raise ConfigError(f"DATABASE_PATH must be absolute, got: {db_path}")
+
     clients_dir = clients_dir.resolve()
     trash_dir = trash_dir.resolve()
     wg_conf = wg_conf.resolve()
+    db_path = db_path.resolve()
 
     if not re.fullmatch(r"\d+\.\d+\.\d+", address_base):
         raise ConfigError(f"ADDRESS_BASE must look like '10.7.0', got: {address_base}")
@@ -91,6 +98,7 @@ def load_config(path: Path) -> AppConfig:
         clients_dir=clients_dir,
         trash_dir=trash_dir,
         wg_conf=wg_conf,
+        db_path=db_path,
         endpoint=endpoint,
         dns=dns,
         address_base=address_base,

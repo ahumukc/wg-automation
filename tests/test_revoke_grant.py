@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from wgau import service, wgconf
+from wgau import db, service, wgconf
 from wgau.config import AppConfig
 from wgau.errors import ClientNotFoundError
 
@@ -36,6 +36,7 @@ def make_app(tmp_path: Path) -> AppConfig:
         clients_dir=clients,
         trash_dir=tmp_path / "trash",
         wg_conf=wg0,
+        db_path=tmp_path / "wgau.db",
         endpoint="vpn.example.com:51820",
         dns="1.1.1.1",
         address_base="10.7.0",
@@ -127,6 +128,24 @@ def test_revoke_grant_not_found(tmp_path, sync_stub):
         service.grant_client(app, "nope")
 
     assert sync_stub.calls == []
+
+
+def test_revoke_and_grant_update_db(tmp_path, sync_stub):
+    app = make_app(tmp_path)
+
+    service.revoke_client(app, "client1")
+    row = db.list_rows(app.db_path)
+    assert len(row) == 1
+    assert row[0]["name"] == "client1"
+    assert row[0]["internal_ip"] == "10.7.0.2"
+    assert row[0]["public_key"] == "a"
+    assert row[0]["status"] == "revoked"
+    assert row[0]["deleted_at"] == 0
+
+    service.grant_client(app, "client1")
+    row = db.list_rows(app.db_path)
+    assert len(row) == 1
+    assert row[0]["status"] == "active"
 
 
 def test_roundtrip_with_inner_comment(tmp_path, sync_stub):

@@ -88,6 +88,31 @@ class TestLoadConfig:
         with pytest.raises(Wg0Error):
             load_config(conf)
 
+    def test_db_path_default(self, paths):
+        conf, _ = paths
+        app = load_config(conf)
+        assert app.db_path == conf.parent / "wgau.db"
+
+    def test_db_path_explicit(self, paths):
+        conf, wg0 = paths
+        custom = str(conf.parent / "custom.db")
+        text = conf.read_text().replace(
+            f"WIREGUARD_CONFIG_FILE = {wg0}\n",
+            f"WIREGUARD_CONFIG_FILE = {wg0}\nDATABASE_PATH = {custom}\n",
+        )
+        conf.write_text(text)
+        assert load_config(conf).db_path == Path(custom)
+
+    def test_db_path_relative(self, paths):
+        conf, wg0 = paths
+        text = conf.read_text().replace(
+            f"WIREGUARD_CONFIG_FILE = {wg0}\n",
+            f"WIREGUARD_CONFIG_FILE = {wg0}\nDATABASE_PATH = rel/wgau.db\n",
+        )
+        conf.write_text(text)
+        with pytest.raises(ConfigError):
+            load_config(conf)
+
     def test_config_missing(self, tmp_path):
         with pytest.raises(ConfigError):
             load_config(tmp_path / "nope.conf")

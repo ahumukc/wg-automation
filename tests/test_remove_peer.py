@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from wgau import service, wgconf
+from wgau import db, service, wgconf
 from wgau.config import AppConfig
 from wgau.errors import ClientNotFoundError, PermissionDeniedError
 
@@ -37,6 +37,7 @@ def make_app(tmp_path: Path) -> AppConfig:
         clients_dir=clients,
         trash_dir=tmp_path / "trash",
         wg_conf=wg0,
+        db_path=tmp_path / "wgau.db",
         endpoint="vpn.example.com:51820",
         dns="1.1.1.1",
         address_base="10.7.0",
@@ -97,6 +98,47 @@ def test_delete_permanently(tmp_path: Path, sync_stub: SyncStub) -> None:
     assert not (app.clients_dir / "client1").exists()
     assert not app.trash_dir.exists()
     assert sync_stub.calls == [("wg0", app.wg_conf)]
+
+
+def test_delete_archives_db_row(tmp_path: Path, sync_stub: SyncStub) -> None:
+    app = make_app(tmp_path)
+    service.sync_folders(app)  # строим БД из wg0.conf
+    assert len(db.list_rows(app.db_path)) == 2
+
+    service.delete_client(app, "client1", assume_yes=True)
+
+    rows = {r["name"]: r for r in db.list_rows(app.db_path)}
+    assert len(rows) == 2
+    assert rows["client1"]["status"] == "deleted"
+    assert rows["client1"]["public_key"] == "a"
+    assert rows["client1"]["deleted_at"] > 0
+    assert rows["client2"]["status"] == "active"
+
+
+def test_delete_without_db_row_keeps_history(tmp_path: Path,
+                                             sync_stub: SyncStub) -> None:
+    """Пир в wg0.conf есть, строки в БД нет — архивная запись создаётся."""
+    app = make_app(tmp_path)
+
+    service.delete_client(app, "client1", assume_yes=True)
+
+    rows = db.list_rows(app.db_path)
+    assert len(rows) == 1
+    assert rows[0]["name"] == "client1"
+    assert rows[0]["status"] == "deleted"
+    assert rows[0]["public_key"] == "a"
+    assert rows[0]["deleted_at"] > 0
+
+
+def test_delete_ghost_folder_no_db_row(tmp_path: Path,
+                                       sync_stub: SyncStub) -> None:
+    app = make_app(tmp_path)
+    (app.clients_dir / "ghost").mkdir()
+
+    service.delete_client(app, "ghost", assume_yes=True)
+
+    assert not (app.clients_dir / "ghost").exists()
+    assert db.list_rows(app.db_path) == []
 
 
 def test_delete_cancelled(tmp_path: Path, sync_stub: SyncStub,

@@ -36,3 +36,7 @@ class QRCodeError(WgauError):
 
 class PermissionDeniedError(WgauError):
     """Not enough privileges for the requested operation (e.g. needs root)."""
+
+
+class DbError(WgauError):
+    """SQLite database cannot be opened, initialized or updated."""
